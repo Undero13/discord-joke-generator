@@ -1,111 +1,89 @@
 const fetch = require('node-fetch');
 const natural = require('natural');
+const  Mistral  = require('@mistralai/mistralai');
+require('dotenv').config();
 
 // Natural Language Processing tools
 const tokenizer = new natural.WordTokenizer();
 const stopwords = ['i', 'a', 'an', 'the', 'w', 'na', 'o', 'się', 'z', 'do', 'to', 'że', 'nie', 'co', 'jest'];
 
+// Initialize Mistral AI client - works with API key or in limited capacity without
+// Using public endpoint for limited access without API key
+const mistralPublicEndpoint = 'https://api.mistral.ai/v1';
+
 /**
- * Generates a joke using a free AI model API
+ * Generates a joke using Mistral AI with fallbacks
  * @returns {Promise<{text: string, imageUrl: string}>} The generated joke and related image
  */
 async function generateJoke() {
-  try {
-    // Using Hugging Face Inference API - free tier
-    // Note: You can add your Hugging Face API key to the .env file if you want better rate limits
-    // but it works without authentication for limited usage
-    const response = await fetch(
-      'https://api-inference.huggingface.co/models/Pfinder/GPT2-jokes',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          // Add authorization if you have a Hugging Face token
-          // 'Authorization': `Bearer ${process.env.HUGGINGFACE_TOKEN}`,
-        },
-        body: JSON.stringify({
-          inputs: 'Opowiedz śmieszny żart po polsku:',
-          parameters: {
-            max_length: 200,
-            temperature: 0.9,
-            top_p: 0.95,
-            do_sample: true
-          }
-        }),
+  // Try different joke generation methods in sequence until one works
+  const apiMethods = [ 
+    generateMistralJoke,   // Priority: Try Mistral AI first
+  ];
+
+  for (const method of apiMethods) {
+    try {
+      const result = await method();
+      if (result && result.text && result.text.length > 15) {
+        console.log(`Pomyślnie wygenerowano żart używając: ${method.name}`);
+        return result;
       }
-    );
-
-    if (!response.ok) {
-      throw new Error(`API response error: ${response.status}`);
+    } catch (error) {
+      console.log(`Nie udało się wygenerować żartu używając ${method.name}:`, error.message);
+      // Continue to next method
     }
-
-    const result = await response.json();
-    
-    // Extract and clean up the generated text
-    let joke = result[0].generated_text;
-    
-    // Remove the prompt from the generated text
-    joke = joke.replace('Opowiedz śmieszny żart po polsku:', '').trim();
-    
-    // If the joke is too short, try an alternative API
-    if (joke.length < 20) {
-      return await generateJokeAlternative();
-    }
-    
-    // Get a related image
-    const imageUrl = await generateRelatedImage(joke);
-    
-    return {
-      text: joke,
-      imageUrl
-    };
-  } catch (error) {
-    console.error('Error generating joke from primary API:', error);
-    return await generateJokeAlternative();
   }
+
+  // If all methods fail, return a hardcoded joke
+  const defaultJoke = 'Dlaczego programista nie może wyjść spod prysznica? Bo instrukcje na szamponie mówią: nałóż, spłucz, powtórz.';
+  return {
+    text: defaultJoke,
+    imageUrl: await generateRelatedImage(defaultJoke)
+  };
 }
 
+
+
 /**
- * Alternative joke generation using another free API
+ * Generates a joke using Mistral AI
  * @returns {Promise<{text: string, imageUrl: string}>} The generated joke and related image
  */
-async function generateJokeAlternative() {
+async function generateMistralJoke() {
+  // Check if we have Mistral API key
+  const apiKey = process.env.MISTRAL_API_KEY || '';
+
   try {
-    // Using JokeAPI as a fallback
-    const response = await fetch('https://v2.jokeapi.dev/joke/Any?lang=pl');
-    
-    if (!response.ok) {
-      throw new Error(`Fallback API response error: ${response.status}`);
-    }
-    
-    const data = await response.json();
-    
     let jokeText;
-    if (data.type === 'single') {
-      jokeText = data.joke;
-    } else {
-      jokeText = `${data.setup}\n\n${data.delivery}`;
-    }
+      // Using official Mistral client if API key is available
+      const client = new Mistral.default(apiKey);
+
+      // Generate a joke in Polish
+      const response = await client.chat({
+        model: 'mistral-tiny', // Using the smallest model for jokes
+        messages: [
+          { role: 'system', content: 'Jesteś zabawnym komikiem. Twoim zadaniem jest generowanie żartów, które są odpowiednie dla wszystkich odbiorców.' },
+          { role: 'user', content: 'Wymyśl krótki, zabawny żart po polsku. Bez wyjaśnień, po prostu podaj żart.' }
+        ],
+        temperature: 0.9,
+        max_tokens: 200
+      });
+      
+      jokeText = response.choices[0].message.content.trim();
+
     
-    // Get a related image
+    // Generate related image for the joke
     const imageUrl = await generateRelatedImage(jokeText);
     
     return {
       text: jokeText,
       imageUrl
     };
-  } catch (fallbackError) {
-    console.error('Error generating joke from fallback API:', fallbackError);
-    // Return a hardcoded joke as last resort
-    const defaultJoke = 'Dlaczego programista nie może wyjść spod prysznica? Bo instrukcje na szamponie mówią: nałóż, spłucz, powtórz.';
-    const defaultImage = 'https://images.unsplash.com/photo-1581299894007-aaa50297cf16?ixlib=rb-4.0.3&q=80&fm=jpg&crop=entropy&cs=tinysrgb&w=400';
-    
-    return {
-      text: defaultJoke,
-      imageUrl: defaultImage
-    };
+  } catch (error) {
+    console.error('Error generating joke with Mistral:', error);
+    throw error;
   }
 }
+
 
 /**
  * Extract keywords from text
@@ -133,34 +111,53 @@ function extractKeywords(text) {
  */
 async function generateRelatedImage(jokeText) {
   try {
-    // Extract keywords from joke
+    // Extract keywords from joke or use the first 20 characters
     const keywords = extractKeywords(jokeText);
+    let searchTerm = jokeText.substring(0, 20);
     
-    // If no keywords were found, use default image term
-    if (keywords.length === 0) {
-      keywords.push('funny', 'joke', 'humor');
+    if (keywords.length > 0) {
+      // Use up to 2 keywords for better results
+      searchTerm = keywords.slice(0, 2).join(' ');
     }
     
-    // Use up to 2 keywords for better results
-    const searchTerms = keywords.slice(0, 2).join(' ');
+    // Create hash from the search term to ensure consistent but unique images
+    const stringToHash = (str) => {
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        hash = ((hash << 5) - hash) + str.charCodeAt(i);
+        hash = hash & hash; // Convert to 32bit integer
+      }
+      return Math.abs(hash);
+    };
     
-    // Use Unsplash API for free images
-    const response = await fetch(
-      `https://source.unsplash.com/400x300/?${encodeURIComponent(searchTerms)},funny,joke`,
-      { method: 'GET' }
-    );
+    const hashValue = stringToHash(searchTerm);
     
-    if (!response.ok) {
-      throw new Error(`Image API response error: ${response.status}`);
-    }
+    // Use multiple free image services that don't require API keys
+    // Rotate between services for variety
+    const imageServices = [
+      // RoboHash - generates robot images based on text
+      () => `https://robohash.org/${encodeURIComponent(searchTerm)}?set=set3&size=300x300`,
+      
+      // DiceBear - generates avatars based on text
+      () => `https://api.dicebear.com/7.x/fun-emoji/svg?seed=${encodeURIComponent(searchTerm)}`,
+      
+      // Picsum Photos - random images with seed
+      () => `https://picsum.photos/seed/${hashValue}/300/300`,
+      
+    ];
     
-    // The URL we get back is the image URL
-    return response.url;
+    // Select a service based on hash value for consistency per joke
+    const serviceIndex = hashValue % imageServices.length;
+    return imageServices[serviceIndex]();
+    
   } catch (error) {
     console.error('Error generating image:', error);
-    // Fallback image if there's an error
-    return 'https://images.unsplash.com/photo-1527224857830-43a7acc85260?ixlib=rb-4.0.3&q=80&fm=jpg&crop=entropy&cs=tinysrgb&w=400';
+    // Fallback image if there's an error - simple placeholder
+    return 'https://via.placeholder.com/300x200/ffde2f/000000?text=Joke+Image';
   }
 }
 
+// Export main functions
 module.exports = { generateJoke };
+
+generateJoke().then(joke => console.log(joke));
