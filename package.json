@@ -1,0 +1,19 @@
+{
+  "name": "discord-joke-bot",
+  "version": "1.0.0",
+  "description": "Discord bot that generates jokes using AI",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": ["discord", "bot", "jokes", "ai"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "discord.js": "^14.11.0",
+    "node-cron": "^3.0.2",
+    "node-fetch": "^2.6.12",
+    "dotenv": "^16.3.1",
+    "natural": "^6.5.0"
+  }
+}
